@@ -1,8 +1,6 @@
 # Scoring API
 1. ## Running api.py
     I run api.py in Pycharm with Python 3.9 interpreter
-
-
 2. ## Example of requests
     Omline Score:
     ```shell
