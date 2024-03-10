@@ -9,6 +9,7 @@ import logging
 import hashlib
 import uuid
 from optparse import OptionParser
+from scoring import get_score, get_interests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 SALT = "Otus"
@@ -40,7 +41,7 @@ class Field:
     def __init__(self, value, required=True, nullable=True):
         self.required = required
         self.nullable = nullable
-        self._value = None
+        self._value = value
 
     @property
     def value(self):
@@ -114,12 +115,15 @@ class ClientIDsField(Field):
 class ClientsInterestsRequest(object):
     def __init__(self,arguments_dictionary):
         self.client_ids = ClientIDsField(arguments_dictionary["client_ids"], required=True)
-        self.date = DateField(arguments_dictionary["client_ids"], required=False, nullable=True)
+        self.date = DateField(arguments_dictionary["date"], required=False, nullable=True)
     def validate(self):
-        pass
+        if self.client_ids.value and self.date.value:
+            return True
+        else:
+            return False
 
     def return_response(self):
-        interests = ', '.join([f'"{i}": ["interest1", "interest2"]' for i in self.client_ids])
+        interests = get_interests("", self.client_ids.value)
         return f"{{ {interests} }}"
 
 class OnlineScoreRequest(object):
@@ -131,9 +135,9 @@ class OnlineScoreRequest(object):
         self.birthday = BirthDayField(arguments_dictionary["birthday"], required=False, nullable=True)
         self.gender = GenderField(arguments_dictionary["gender"], required=False, nullable=True)
     def validate(self):
-        name_check = self.first_name and self.last_name
-        contact_check = self.email and self.phone
-        personal_info_check = self.gender and self.birthday
+        name_check = self.first_name.value and self.last_name.value
+        contact_check = self.email.value and self.phone.value
+        personal_info_check = self.gender.value and self.birthday.value
 
         if name_check or contact_check or personal_info_check:
             return True
@@ -143,21 +147,20 @@ class OnlineScoreRequest(object):
         if self.first_name is "admin":
             return 42
         else:
-            return 99
+            return get_score("", self.phone.value,self.email.value,
+                             self.birthday.value,self.gender.value,
+                             self.first_name.value, self.last_name.value)
     def return_response(self):
         return self.get_score()
 
 class MethodRequest(object):
     def __init__(self, request):
-        # parse the request body
-        request_payload = json.loads(request["body"])
 
-        # set each respective attribute to the corresponding request field
-        self.account = CharField(request_payload.get("account"), required=False, nullable=True)
-        self.login = CharField(request_payload.get("login"), required=True, nullable=True)
-        self.token = CharField(request_payload.get("token"), required=True, nullable=True)
-        self.arguments = ArgumentsField(request_payload.get("arguments"), required=True, nullable=True)
-        self.method = CharField(request_payload.get("method"), required=True, nullable=False)
+        self.account = CharField(request.get("account"), required=False, nullable=True)
+        self.login = CharField(request.get("login"), required=True, nullable=True)
+        self.token = CharField(request.get("token"), required=True, nullable=True)
+        self.arguments = ArgumentsField(request.get("arguments"), required=True, nullable=True)
+        self.method = CharField(request.get("method"), required=True, nullable=False)
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
@@ -167,8 +170,9 @@ def check_auth(request):
     if request.is_admin:
         digest = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
     else:
-        digest = hashlib.sha512(request.account + request.login + SALT).hexdigest()
-    if digest == request.token:
+        digest = hashlib.sha512((
+            request.account.value + request.login.value + SALT).encode('utf-8')).hexdigest()
+    if digest == request.token.value:
         return True
     return False
 
@@ -182,10 +186,10 @@ def method_handler(request, ctx, store):
     method_request = MethodRequest(request["body"])
     if not check_auth(method_request):
         return None, FORBIDDEN
-    if method_request.method not in methods:
+    if method_request.method.value not in methods.keys():
         raise ValueError("Invalid method")
-    current_method_class = methods[method_request.method]
-    current_method = current_method_class(method_request.arguments)
+    current_method_class = methods[method_request.method.value]
+    current_method = current_method_class(method_request.arguments.value)
     if current_method.validate():
         response = current_method.return_response()
         code = OK
@@ -238,7 +242,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             r = {"error": response or ERRORS.get(code, "Unknown Error"), "code": code}
         context.update(r)
         logging.info(context)
-        self.wfile.write(json.dumps(r))
+        self.wfile.write(json.dumps(r).encode('utf-8'))
         return
 
 
