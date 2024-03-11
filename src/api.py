@@ -8,6 +8,7 @@ import datetime
 import logging
 import hashlib
 import uuid
+from datetime import datetime, timedelta
 from optparse import OptionParser
 from scoring import get_score, get_interests
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -94,8 +95,10 @@ class DateField(Field):
 class BirthDayField(DateField):
     def validate(self, value):
         super().validate(value)
-        if not re.match(r'^.*\.[0-9]*\.', value):
-            raise ValueError("Invalid phone number.")
+        handred_years_ago = datetime.now() - timedelta(days=100 * 365.25)
+        if value >= handred_years_ago:
+            raise ValueError("Birthdate value more then 100 years ago.")
+
 
 
 class GenderField(Field):
