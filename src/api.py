@@ -38,6 +38,7 @@ GENDERS = {
     FEMALE: "female",
 }
 
+
 class Field:
     def __init__(self, value, required=True, nullable=True):
         self.required = required
@@ -65,12 +66,12 @@ class CharField(Field):
             raise ValueError("Value must be a string.")
 
 
-
 class ArgumentsField(Field):
     def validate(self, value):
         super().validate(value)
         if not isinstance(value, dict):
             raise ValueError("Value must be a dictionary.")
+
 
 class EmailField(CharField):
     def validate(self, value):
@@ -92,6 +93,7 @@ class DateField(Field):
         if not isinstance(value, datetime.date):
             raise ValueError("Value must be a datetime.date instance.")
 
+
 class BirthDayField(DateField):
     def validate(self, value):
         super().validate(value)
@@ -100,13 +102,11 @@ class BirthDayField(DateField):
             raise ValueError("Birthdate value more then 100 years ago.")
 
 
-
 class GenderField(Field):
     def validate(self, value):
         super().validate(value)
-        if value not in (1,2):
+        if value not in (1, 2):
             raise ValueError("Invalid gender.")
-
 
 
 class ClientIDsField(Field):
@@ -115,10 +115,13 @@ class ClientIDsField(Field):
         if not isinstance(value, list):
             raise ValueError("Value must be a list.")
 
+
 class ClientsInterestsRequest(object):
-    def __init__(self,arguments_dictionary):
+    def __init__(self, arguments_dictionary, ctx):
         self.client_ids = ClientIDsField(arguments_dictionary["client_ids"], required=True)
         self.date = DateField(arguments_dictionary["date"], required=False, nullable=True)
+        ctx["nclients"] = len(self.client_ids.value)
+
     def validate(self):
         if self.client_ids.value and self.date.value:
             return True
@@ -129,14 +132,18 @@ class ClientsInterestsRequest(object):
         interests = get_interests("", self.client_ids.value)
         return f"{{ {interests} }}"
 
+
 class OnlineScoreRequest(object):
-    def __init__(self,arguments_dictionary):
-        self.first_name = CharField(arguments_dictionary["first_name"],required=False, nullable=True)
-        self.last_name = CharField(arguments_dictionary["last_name"],required=False, nullable=True)
-        self.email = EmailField(arguments_dictionary["email"],required=False, nullable=True)
-        self.phone = PhoneField(arguments_dictionary["phone"],required=False, nullable=True)
+    def __init__(self, arguments_dictionary, ctx):
+        self.first_name = CharField(arguments_dictionary["first_name"], required=False, nullable=True)
+        self.last_name = CharField(arguments_dictionary["last_name"], required=False, nullable=True)
+        self.email = EmailField(arguments_dictionary["email"], required=False, nullable=True)
+        self.phone = PhoneField(arguments_dictionary["phone"], required=False, nullable=True)
         self.birthday = BirthDayField(arguments_dictionary["birthday"], required=False, nullable=True)
         self.gender = GenderField(arguments_dictionary["gender"], required=False, nullable=True)
+        ctx["has"] = [m for m in dir(self) if
+                      not m.startswith('__') and not callable(getattr(self, m)) and getattr(self, m).value]
+
     def validate(self):
         name_check = self.first_name.value and self.last_name.value
         contact_check = self.email.value and self.phone.value
@@ -146,35 +153,38 @@ class OnlineScoreRequest(object):
             return True
         else:
             return False
+
     def get_score(self):
-        if self.first_name is "admin":
+        if self.first_name == "admin":
             return 42
         else:
-            return get_score("", self.phone.value,self.email.value,
-                             self.birthday.value,self.gender.value,
+            return get_score("", self.phone.value, self.email.value,
+                             self.birthday.value, self.gender.value,
                              self.first_name.value, self.last_name.value)
+
     def return_response(self):
         return self.get_score()
 
+
 class MethodRequest(object):
     def __init__(self, request):
-
         self.account = CharField(request.get("account"), required=False, nullable=True)
         self.login = CharField(request.get("login"), required=True, nullable=True)
         self.token = CharField(request.get("token"), required=True, nullable=True)
         self.arguments = ArgumentsField(request.get("arguments"), required=True, nullable=True)
         self.method = CharField(request.get("method"), required=True, nullable=False)
+
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
 
-def check_auth(request):
 
+def check_auth(request):
     if request.is_admin:
         digest = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
     else:
         digest = hashlib.sha512((
-            request.account.value + request.login.value + SALT).encode('utf-8')).hexdigest()
+                                        request.account.value + request.login.value + SALT).encode('utf-8')).hexdigest()
     if digest == request.token.value:
         return True
     return False
@@ -192,7 +202,7 @@ def method_handler(request, ctx, store):
     if method_request.method.value not in methods.keys():
         raise ValueError("Invalid method")
     current_method_class = methods[method_request.method.value]
-    current_method = current_method_class(method_request.arguments.value)
+    current_method = current_method_class(method_request.arguments.value, ctx)
     if current_method.validate():
         response = current_method.return_response()
         code = OK
@@ -222,7 +232,6 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         except (ValueError, TypeError) as e:
             code = BAD_REQUEST
             logging.error(f"Exception received. Details {e}")
-
 
         if request:
             path = self.path.strip("/")
